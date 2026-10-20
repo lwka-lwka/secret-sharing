@@ -15,38 +15,53 @@ jobs:
           python-version: "3.12"
 
       - name: 安裝套件
-        run: python -m pip install streamlit pandas pyinstaller
+        run: python -m pip install streamlit pandas numpy pillow pyinstaller
 
-      - name: 打包成 exe
+      - name: 打包 key 版 exe
         run: >
           pyinstaller --noconfirm --onefile --name SecretSharing
           --collect-all streamlit --recursive-copy-metadata streamlit
           --add-data "secret_sharing.py;."
           run_app.py
 
-      - name: 測試 exe 能否正常啟動
+      - name: 打包影像版 exe
+        run: >
+          pyinstaller --noconfirm --onefile --name SecretImageSharing
+          --collect-all streamlit --recursive-copy-metadata streamlit
+          --add-data "image_sharing.py;."
+          run_image_app.py
+
+      - name: 測試兩個 exe 能否正常啟動
         shell: pwsh
         run: |
           $env:NO_BROWSER = "1"
-          $proc = Start-Process -FilePath "dist\SecretSharing.exe" -PassThru -NoNewWindow `
-                  -RedirectStandardOutput out.txt -RedirectStandardError err.txt
-          $ok = $false
-          for ($i = 0; $i -lt 100; $i++) {
-            Start-Sleep -Seconds 3
-            if ($proc.HasExited) { break }
-            try {
-              $r = Invoke-WebRequest -Uri "http://localhost:8501/_stcore/health" -UseBasicParsing -TimeoutSec 3
-              if ($r.Content -match "ok") { $ok = $true; break }
-            } catch {}
+          function Test-Exe($name, $port) {
+            $proc = Start-Process -FilePath "dist\$name.exe" -PassThru -NoNewWindow `
+                    -RedirectStandardOutput "$name-out.txt" -RedirectStandardError "$name-err.txt"
+            $ok = $false
+            for ($i = 0; $i -lt 100; $i++) {
+              Start-Sleep -Seconds 3
+              if ($proc.HasExited) { break }
+              try {
+                $r = Invoke-WebRequest -Uri "http://localhost:$port/_stcore/health" -UseBasicParsing -TimeoutSec 3
+                if ($r.Content -match "ok") { $ok = $true; break }
+              } catch {}
+            }
+            Get-Process $name -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+            Write-Host "===== $name 的輸出 ====="
+            if (Test-Path "$name-out.txt") { Get-Content "$name-out.txt" | Out-Host }
+            if (Test-Path "$name-err.txt") { Get-Content "$name-err.txt" | Out-Host }
+            if ($ok) { Write-Host "$name 啟動成功" } else { Write-Host "$name 沒有成功啟動網頁伺服器" }
+            return $ok
           }
-          Get-Process SecretSharing -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          Write-Host "===== exe 的輸出 ====="
-          if (Test-Path out.txt) { Get-Content out.txt }
-          if (Test-Path err.txt) { Get-Content err.txt }
-          if ($ok) { Write-Host "exe 啟動成功" } else { Write-Host "exe 沒有成功啟動網頁伺服器"; exit 1 }
+          $a = Test-Exe "SecretSharing" 8501
+          $b = Test-Exe "SecretImageSharing" 8502
+          if (-not ($a -and $b)) { exit 1 }
 
       - uses: actions/upload-artifact@v4
         with:
           name: SecretSharing-exe
-          path: dist/SecretSharing.exe
+          path: |
+            dist/SecretSharing.exe
+            dist/SecretImageSharing.exe
